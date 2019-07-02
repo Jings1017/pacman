@@ -1,0 +1,19 @@
+#ifndef FOODBALL_H
+#define FOODBALL_H
+
+#include <QVector>
+#include <QPoint>
+
+class dots
+{
+private:
+    QVector<QPoint> dots_positions;
+    QVector<QPoint> pacmanmapforreference;
+    int dots_count;
+public:
+    dots();
+    QVector<QPoint> getDotsPositions() {return dots_positions;}
+    void CreateDotsPositionsVector();
+};
+
+#endif // FOODBALL_H

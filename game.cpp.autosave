@@ -1,0 +1,1693 @@
+#include "game.h"
+#include "ui_Game_window.h"
+#include "map.h"
+#include "energizer.h"
+#include <QGraphicsScene>
+#include <QTime>
+
+#define LEFT  1
+#define UP    2
+#define DOWN  3
+#define RIGHT 4
+
+Game_window::Game_window(QWidget *parent) : QDialog(parent),ui(new Ui::Game_window)
+{
+    ui->setupUi(this);
+    scene.setParent(this);
+    ui->gameplay_area->setScene(&scene);
+    ui->gameplay_area->setRenderHint(QPainter::Antialiasing);
+    scene.setSceneRect(0,0,612,740);
+    ui->gameplay_area->setSceneRect(scene.sceneRect());
+
+    // map
+    GenerateMap();
+    // pacman
+    GeneratePacman();
+    // ghost
+    GenerateGhosts();
+    // score
+    ShowScore();
+
+    collision_detection_delay = 0; //delay collision detection after game restart
+
+    scene.addItem(&text_board);
+
+    playing = false;
+    ready_to_restart = false;
+
+    this->setFocus(Qt::ActiveWindowFocusReason);
+}
+
+void Game_window::GenerateMap()
+{
+    map_item = scene.addPixmap(map.getMap_Background_Picture());
+    energizer_positions = energizer.getEnergizerPositions();
+    dots_positions = dots.getDotsPositions();
+
+    for(int i=0;i<energizer_positions.size();++i)
+    {
+        energizer_graphical_items_table.push_back(scene.addEllipse(energizer_positions.at(i).x()-5,energizer_positions.at(i).y()-8,15,15,QPen(Qt::NoPen),QBrush(Qt::white)));
+    }
+
+    dots_items_count=dots_positions.size();
+
+    for(int i=0;i<dots_positions.size();++i)
+    {
+        dots_graphical_items_table.push_back(scene.addEllipse(dots_positions.at(i).x(),dots_positions.at(i).y(),7,7,QPen(Qt::NoPen),QBrush(Qt::white)));
+    }
+}
+
+void Game_window::GeneratePacman()
+{
+    start=false;
+
+    pacman.setDirection(LEFT);
+
+    pacman.setPac_X(310);
+    pacman.setPac_Y(514);
+
+    scene.addItem(&pacman);
+}
+
+void Game_window::GenerateGhosts()
+{
+    start_timer = 0;
+
+    scared = false;
+
+    scarestate = 0;
+
+    ghost1.setIsScared(false);
+    ghost2.setIsScared(false);
+    ghost3.setIsScared(false);
+    ghost4.setIsScared(false);
+
+    ghost1.setGhost_X(307);
+    ghost1.setGhost_Y(258);
+
+    ghost2.setGhost_X(270);
+    ghost2.setGhost_Y(318);
+
+    ghost3.setGhost_X(344);
+    ghost3.setGhost_Y(318);
+
+    ghost4.setGhost_X(307);
+    ghost4.setGhost_Y(318);
+
+    ghost1.setGhostColor("orange");
+    ghost2.setGhostColor("red");
+    ghost3.setGhostColor("blue");
+    ghost4.setGhostColor("pink");
+
+    ghostmoving1=false;
+    ghostmoving2=false;
+    ghostmoving3=false;
+    ghostmoving4=false;
+
+    ghoststart1=false;
+    ghoststart2=false;
+    ghoststart3=false;
+    ghoststart4=false;
+
+    all_ghosts_started = false;
+
+    scene.addItem(&ghost1);
+    scene.addItem(&ghost2);
+    scene.addItem(&ghost3);
+    scene.addItem(&ghost4);
+}
+
+void Game_window::ShowScore()
+{
+    score=0;
+    score_display = scene.addText("Score:");
+    score_display->setDefaultTextColor(Qt::white);
+    score_display->setFont(QFont("Arial", 40));
+    score_display->setPos(0,690);
+}
+
+void Game_window::StartGame()
+{
+    sounds.beginning_sound.play();
+
+    text_board.hide();
+
+    connect(&timer, SIGNAL(timeout()), this,SLOT(updater()));
+    connect(&ghoststimer, SIGNAL(timeout()), this,SLOT(ghostupdater()));
+
+    timer.start(9);
+    ghoststimer.start(10);
+    this->setFocus(); //gives the keyboard input focus to this widget
+}
+
+void Game_window::RestartGame()
+{
+    ClearDots();
+
+    pacman.show();
+    ghost1.show();
+    ghost2.show();
+    ghost3.show();
+    ghost4.show();
+
+    GenerateMap();
+    GeneratePacman();
+    GenerateGhosts();
+
+    ShowScore();
+
+    sounds.beginning_sound.play();
+
+    text_board.hide();
+
+    timer.start(9);
+    ghoststimer.start(10);
+    this->setFocus(); //gives the keyboard input focus to this widget
+}
+
+void Game_window::ClearDots()
+{
+    energizer_graphical_items_table.clear();
+    dots_graphical_items_table.clear();
+    // release memory
+    energizer_graphical_items_table.squeeze();
+    dots_graphical_items_table.squeeze();
+}
+
+void Game_window::HideAll()
+{
+    // hide map
+    map_item->hide();
+    // hide score
+    score_display->hide();
+    // hide pacman
+    pacman.hide();
+    scene.removeItem(&pacman);
+    // hide ghost
+    ghost1.hide();
+    ghost2.hide();
+    ghost3.hide();
+    ghost4.hide();
+    scene.removeItem(&ghost1);
+    scene.removeItem(&ghost2);
+    scene.removeItem(&ghost3);
+    scene.removeItem(&ghost4);
+    //  hide all dots
+    for(int i=0; i<dots_graphical_items_table.size();++i)
+    {
+        dots_graphical_items_table.at(i)->hide();
+    }
+
+    for(int i=0; i<energizer_graphical_items_table.size();++i)
+    {
+        energizer_graphical_items_table.at(i)->hide();
+    }
+}
+
+void Game_window::EndGame(int win)
+{
+    if(win==1)
+    {
+        HideAll();
+
+        text_board.show();
+        text_board.setScore(score);
+        text_board.setGameWon(true);
+        text_board.show();
+
+        score=0;
+
+        scene.update();
+        playing = false;
+        ready_to_restart = true;
+    }
+
+    else
+    {
+        HideAll();
+
+        text_board.show();
+        text_board.setScore(score);
+        text_board.setGameLost(true);
+        text_board.show();
+        sounds.pacman_death_sound.play();
+        score=0;
+
+        scene.update();
+        playing = false;
+        ready_to_restart = true;
+    }
+}
+
+void Game_window::PacmanMove()
+{
+    QPoint point;
+
+    int pac_x = pacman.getPac_X();
+    int pac_y = pacman.getPac_Y();
+    int direction = pacman.getDirection();
+    int nextdirection = pacman.getNextDirection();
+
+    if(nextdirection != direction)
+    {
+        switch(nextdirection)
+        {
+        case LEFT:
+            point.setX(pac_x-1);
+            point.setY(pac_y);
+
+            if(map.IsPointAvailable(point))
+            {
+                direction=nextdirection;
+                nextdirection=0;
+            }
+            break;
+
+        case UP:
+            point.setX(pac_x);
+            point.setY(pac_y-1);
+            if(map.IsPointAvailable(point))
+            {
+                direction=nextdirection;
+                nextdirection=0;
+            }
+            break;
+
+        case DOWN:
+            point.setX(pac_x);
+            point.setY(pac_y+1);
+            if(map.IsPointAvailable(point))
+            {
+                direction=nextdirection;
+                nextdirection=0;
+            }
+            break;
+
+        case RIGHT:
+            point.setX(pac_x+1);
+            point.setY(pac_y);
+            if(map.IsPointAvailable(point))
+            {
+                direction=nextdirection;
+                nextdirection=0;
+            }
+            break;
+        }
+    }
+
+    switch(direction)
+    {
+    case LEFT:
+        point.setX(pac_x-1);
+        point.setY(pac_y);
+        pacman.setDirection(direction);
+
+        if(map.IsPointAvailable(point))
+        {
+            pac_x = pac_x - 1;
+        }
+
+        break;
+
+    case UP:
+        point.setX(pac_x);
+        point.setY(pac_y-1);
+        pacman.setDirection(direction);
+
+        if(map.IsPointAvailable(point))
+        {
+            pac_y= pac_y - 1;
+        }
+
+        break;
+
+    case DOWN:
+        point.setX(pac_x);
+        point.setY(pac_y+1);
+        pacman.setDirection(direction);
+
+        if(map.IsPointAvailable(point))
+        {
+            pac_y= pac_y + 1;
+        }
+
+        break;
+
+    case RIGHT:
+        point.setX(pac_x+1);
+        point.setY(pac_y);
+        pacman.setDirection(direction);
+
+        if(map.IsPointAvailable(point))
+        {
+            pac_x = pac_x + 1;
+        }
+
+        break;
+    }
+
+    // can throu from right to left
+    if(pac_x==0 && pac_y==318) //teleportation when reached left boundary of middle horizontal line
+    {
+        pac_x=613;
+    }
+
+    if(pac_x==614 && pac_y==318) //teleportation when reached right boundary of middle horizontal line
+    {
+        pac_x=1;
+    }
+
+    pacman.setPac_X(pac_x);
+    pacman.setPac_Y(pac_y);
+}
+
+void Game_window::GhostMove1()
+{
+    QPoint p;
+
+    int pac_x = pacman.getPac_X();
+    int pac_y = pacman.getPac_Y();
+    int ghost1_x = ghost1.getGhost_X();
+    int ghost1_y = ghost1.getGhost_Y();
+    int ghost1_dir = ghost1.getGhostDirection();
+    int nextghost1_dir = ghost1.getNextGhostDirection();
+
+    if(!ghostmoving1)
+    {
+        ghost1_dir=(qrand()%4)+1;
+    }
+    else
+    {
+        if(ghost1_x==pac_x && ghost1_y<pac_y)
+        {
+            nextghost1_dir = DOWN ;
+        }
+        else if (ghost1_x==pac_x && ghost1_y>pac_y)
+        {
+            nextghost1_dir = UP;
+        }
+        else if (ghost1_x<pac_x && ghost1_y==pac_y)
+        {
+            nextghost1_dir = RIGHT ;
+        }
+        else if(ghost1_x>pac_x && ghost1_y==pac_y)
+        {
+            nextghost1_dir = LEFT ;
+        }
+        else if(ghost1_x<pac_x && ghost1_y<pac_y)
+        {
+            nextghost1_dir = RIGHT ;
+        }
+        else if (ghost1_x<pac_x && ghost1_y>pac_y)
+        {
+            nextghost1_dir = RIGHT;
+        }
+        else if (ghost1_x>pac_x && ghost1_y<pac_x)
+        {
+            nextghost1_dir = LEFT ;
+        }
+        else if (ghost1_x>pac_x && ghost1_y>pac_y)
+        {
+            nextghost1_dir = LEFT ;
+        }
+
+        if((ghost1_dir==RIGHT && ghost1_y<pac_y) || (ghost1_dir==LEFT && ghost1_y>pac_y) ) //ghost >> right || left
+        {
+            if(ghost1_dir==LEFT && ghost1_y>pac_y)
+            {
+                nextghost1_dir=UP;
+            }
+            else if(ghost1_dir==RIGHT &&ghost1_y<pac_y)
+            {
+                nextghost1_dir=DOWN;
+            }
+        }
+        else if((ghost1_dir==DOWN && ghost1_x<pac_x) || (ghost1_dir==UP && ghost1_x>pac_x))
+        {
+            if(ghost1_dir==UP && ghost1_x>pac_x)
+            {
+                nextghost1_dir=LEFT;
+            }
+            else if(ghost1_dir==DOWN && ghost1_x<pac_x)
+            {
+                nextghost1_dir=RIGHT;
+            }
+        }
+    }
+    // turn
+    if(nextghost1_dir != ghost1_dir)
+    {
+        switch(nextghost1_dir)
+        {
+        case LEFT:
+            p.setX(ghost1_x-1);
+            p.setY(ghost1_y);
+
+            if(map.IsPointAvailable(p))
+            {
+                ghost1_dir = nextghost1_dir;
+                nextghost1_dir = 0;
+            }
+
+            break;
+
+        case RIGHT:
+            p.setX(ghost1_x+1);
+            p.setY(ghost1_y);
+            if(map.IsPointAvailable(p))
+            {
+                ghost1_dir = nextghost1_dir;
+                nextghost1_dir = 0 ;
+            }
+
+            break;
+
+        case DOWN:
+            p.setX(ghost1_x);
+            p.setY(ghost1_y+1);
+            if(map.IsPointAvailable(p))
+            {
+                ghost1_dir = nextghost1_dir;
+                nextghost1_dir = 0;
+            }
+
+            break;
+
+        case UP:
+            p.setX(ghost1_x);
+            p.setY(ghost1_y-1);
+            if(map.IsPointAvailable(p))
+            {
+                ghost1_dir = nextghost1_dir;
+                nextghost1_dir = 0;
+            }
+
+            break;
+        }
+    }
+
+    switch(ghost1_dir)
+    {
+    case LEFT:
+        p.setX(ghost1_x-1);
+        p.setY(ghost1_y);
+        ghost1.setGhostDirection(ghost1_dir);
+
+        if(map.IsPointAvailable(p))
+        {
+            ghost1_x = ghost1_x -1 ;
+            ghostmoving1=true;
+        }
+        else
+        {
+            ghostmoving1=false;
+        }
+
+        break;
+
+    case RIGHT:
+        ghost1.setGhostDirection(ghost1_dir);
+        p.setX(ghost1_x+1);
+        p.setY(ghost1_y);
+        if(map.IsPointAvailable(p))
+        {
+            ghost1_x = ghost1_x +1 ;
+            ghostmoving1=true;
+        }
+        else
+        {
+            ghostmoving1=false;
+        }
+
+        break;
+
+    case DOWN:
+        ghost1.setGhostDirection(ghost1_dir);
+        p.setX(ghost1_x);
+        p.setY(ghost1_y+1);
+        if(map.IsPointAvailable(p))
+        {
+            ghost1_y = ghost1_y +1 ;
+            ghostmoving1=true;
+        }
+        else
+        {
+            ghostmoving1=false;
+        }
+
+        break;
+    case UP:
+        ghost1.setGhostDirection(ghost1_dir);
+        p.setX(ghost1_x);
+        p.setY(ghost1_y-1);
+        if(map.IsPointAvailable(p))
+        {
+            ghost1_y =  ghost1_y -1 ;
+            ghostmoving1=true;
+        }
+        else
+        {
+            ghostmoving1=false;
+        }
+
+        break;
+    }
+
+    if(ghost1_x<=0)
+    {
+        ghost1_x=613;
+        ghost1_y=318;
+    }
+    else if(ghost1_x>=614)
+    {
+        ghost1_x=1;
+        ghost1_y=318;
+    }
+
+    ghost1.setGhost_X(ghost1_x);
+    ghost1.setGhost_Y(ghost1_y);
+    ghost1.setNextGhostDirection(nextghost1_dir);
+}
+void Game_window::GhostMove2()
+{
+    QPoint p;
+
+    int pac_x = pacman.getPac_X();
+    int pac_y = pacman.getPac_Y();
+    int ghost2_x = ghost2.getGhost_X();
+    int ghost2_y = ghost2.getGhost_Y();
+    int ghost2_dir = ghost2.getGhostDirection();
+    int nextghost2_dir = ghost2.getNextGhostDirection();
+
+    if(!ghostmoving2)
+    {
+        ghost2_dir=((qrand()%4)*qrand())%4+1;
+    }
+    else
+    {
+        if(ghost2_x==pac_x && ghost2_y<pac_y)
+        {
+            nextghost2_dir = DOWN ;
+        }
+        else if (ghost2_x==pac_x && ghost2_y>pac_y)
+        {
+            nextghost2_dir = UP;
+        }
+        else if (ghost2_x<pac_x && ghost2_y==pac_y)
+        {
+            nextghost2_dir = RIGHT ;
+        }
+        else if(ghost2_x>pac_x && ghost2_y==pac_y)
+        {
+            nextghost2_dir = LEFT ;
+        }
+        else if(ghost2_x<pac_x && ghost2_y<pac_y)
+        {
+            nextghost2_dir = RIGHT ;
+        }
+        else if (ghost2_x<pac_x && ghost2_y>pac_y)
+        {
+            nextghost2_dir = UP;
+        }
+        else if (ghost2_x>pac_x && ghost2_y<pac_x)
+        {
+            nextghost2_dir = DOWN ;
+        }
+        else if (ghost2_x>pac_x && ghost2_y>pac_y)
+        {
+            nextghost2_dir = UP ;
+        }
+
+        if((ghost2_dir==RIGHT &&ghost2_y<pac_y) || (ghost2_dir==LEFT && ghost2_y>pac_y))
+        {
+            if(ghost2_y>pac_y)
+            {
+                nextghost2_dir=DOWN;
+            }
+            else if(ghost2_y<pac_y)
+            {
+                nextghost2_dir=UP;
+            }
+        }
+        else if((ghost2_dir==DOWN && ghost2_x<pac_x) || (ghost2_dir==UP && ghost2_x>pac_x))
+        {
+            if(ghost2_dir==UP && ghost2_x>pac_x)
+            {
+                nextghost2_dir=LEFT;
+            }
+            else if(ghost2_dir==DOWN && ghost2_x<pac_x)
+            {
+                nextghost2_dir=RIGHT;
+            }
+        }
+    }
+
+    if(nextghost2_dir!=ghost2_dir)
+    {
+        switch(nextghost2_dir)
+        {
+        case LEFT:
+            p.setX(ghost2_x-1);
+            p.setY(ghost2_y);
+
+            if(map.IsPointAvailable(p))
+            {
+                ghost2_dir=nextghost2_dir;
+                nextghost2_dir=0;
+            }
+
+            break;
+
+        case RIGHT:
+            p.setX(ghost2_x+1);
+            p.setY(ghost2_y);
+            if(map.IsPointAvailable(p))
+            {
+                ghost2_dir=nextghost2_dir;
+                nextghost2_dir=0;
+            }
+
+            break;
+        case DOWN:
+            p.setX(ghost2_x);
+            p.setY(ghost2_y+1);
+            if(map.IsPointAvailable(p))
+            {
+                ghost2_dir=nextghost2_dir;
+                nextghost2_dir=0;
+            }
+
+            break;
+        case UP:
+            p.setX(ghost2_x);
+            p.setY(ghost2_y-1);
+            if(map.IsPointAvailable(p))
+            {
+                ghost2_dir=nextghost2_dir;
+                nextghost2_dir=0;
+            }
+            break;
+        }
+    }
+
+    switch(ghost2_dir)
+    {
+    case LEFT:
+        p.setX(ghost2_x-1);
+        p.setY(ghost2_y);
+        ghost2.setGhostDirection(ghost2_dir);
+
+        if(map.IsPointAvailable(p))
+        {
+            ghost2_x-=1;
+            ghostmoving2=true;
+        }
+        else
+        {
+            ghostmoving2=false;
+        }
+
+        break;
+
+    case RIGHT:
+        ghost2.setGhostDirection(ghost2_dir);
+        p.setX(ghost2_x+1);
+        p.setY(ghost2_y);
+        if(map.IsPointAvailable(p))
+        {
+            ghost2_x+=1;
+            ghostmoving2=true;
+        }
+        else
+        {
+            ghostmoving2=false;
+        }
+
+        break;
+    case DOWN:
+        ghost2.setGhostDirection(ghost2_dir);
+        p.setX(ghost2_x);
+        p.setY(ghost2_y+1);
+        if(map.IsPointAvailable(p))
+        {
+            ghost2_y+=1;
+            ghostmoving2=true;
+        }
+        else
+        {
+            ghostmoving2=false;
+        }
+
+        break;
+    case UP:
+        ghost2.setGhostDirection(ghost2_dir);
+        p.setX(ghost2_x);
+        p.setY(ghost2_y-1);
+        if(map.IsPointAvailable(p))
+        {
+            ghost2_y-=1;
+            ghostmoving2=true;
+        }
+        else
+        {
+            ghostmoving2=false;
+        }
+
+        break;
+    }
+
+    if(ghost2_x<=0)
+    {
+        ghost2_x=613;
+        ghost2_y=318;
+    }
+    else if(ghost2_x>=614)
+    {
+        ghost2_x=1;
+        ghost2_y=318;
+    }
+
+    ghost2.setGhost_X(ghost2_x);
+    ghost2.setGhost_Y(ghost2_y);
+    ghost2.setNextGhostDirection(nextghost2_dir);
+}
+void Game_window::GhostMove3()
+{
+    QPoint p;
+
+    int pac_x = pacman.getPac_X();
+    int pac_y = pacman.getPac_Y();
+    int ghost3_x = ghost3.getGhost_X();
+    int ghost3_y = ghost3.getGhost_Y();
+    int ghost3_dir = ghost3.getGhostDirection();
+    int nextghost3_dir = ghost3.getNextGhostDirection();
+
+    if(!ghostmoving3)
+    {
+        ghost3_dir=((qrand()+3)*qrand()%4)+1;
+    }
+    else
+    {
+        if(ghost3_x==pac_x && ghost3_y<pac_y)
+        {
+            nextghost3_dir = DOWN ;
+        }
+        else if (ghost3_x==pac_x && ghost3_y>pac_y)
+        {
+            nextghost3_dir = UP;
+        }
+        else if (ghost3_x<pac_x && ghost3_y==pac_y)
+        {
+            nextghost3_dir = RIGHT ;
+        }
+        else if(ghost3_x>pac_x && ghost3_y==pac_y)
+        {
+            nextghost3_dir = LEFT ;
+        }
+        else if(ghost3_x<pac_x && ghost3_y<pac_y)
+        {
+            nextghost3_dir = DOWN ;
+        }
+        else if (ghost3_x<pac_x && ghost3_y>pac_y)
+        {
+            nextghost3_dir = RIGHT;
+        }
+        else if (ghost3_x>pac_x && ghost3_y<pac_x)
+        {
+            nextghost3_dir = DOWN ;
+        }
+        else if (ghost3_x>pac_x && ghost3_y>pac_y)
+        {
+            nextghost3_dir = LEFT ;
+        }
+
+        if((ghost3_dir==RIGHT && ghost3_y<pac_y) || (ghost3_dir==LEFT && ghost3_y>pac_y))
+        {
+            if(ghost3_dir==LEFT && ghost3_y>pac_y)
+            {
+                nextghost3_dir=UP;
+            }
+            else if(ghost3_dir==RIGHT &&ghost3_y<pac_y)
+            {
+                nextghost3_dir=DOWN;
+            }
+
+        }
+        else if((ghost3_dir==DOWN && ghost3_x<pac_x) || (ghost3_dir==UP && ghost3_x>pac_x))
+        {
+            if(ghost3_dir==UP && ghost3_x>pac_x)
+            {
+                nextghost3_dir=LEFT;
+            }
+            else if(ghost3_dir==DOWN && ghost3_x<pac_x)
+            {
+                nextghost3_dir=RIGHT;
+            }
+        }
+    }
+
+    if(nextghost3_dir!=ghost3_dir)
+    {
+        switch(nextghost3_dir)
+        {
+        case LEFT:
+            p.setX(ghost3_x-1);
+            p.setY(ghost3_y);
+
+            if(map.IsPointAvailable(p))
+            {
+                ghost3_dir=nextghost3_dir;
+                nextghost3_dir=0;
+
+            }
+
+            break;
+
+        case RIGHT:
+            p.setX(ghost3_x+1);
+            p.setY(ghost3_y);
+            if(map.IsPointAvailable(p))
+            {
+                ghost3_dir=nextghost3_dir;
+                nextghost3_dir=0;
+            }
+
+            break;
+        case DOWN:
+            p.setX(ghost3_x);
+            p.setY(ghost3_y+1);
+            if(map.IsPointAvailable(p))
+            {
+                ghost3_dir=nextghost3_dir;
+                nextghost3_dir=0;
+            }
+
+            break;
+        case UP:
+            p.setX(ghost3_x);
+            p.setY(ghost3_y-1);
+            if(map.IsPointAvailable(p))
+            {
+                ghost3_dir=nextghost3_dir;
+                nextghost3_dir=0;
+            }
+            break;
+        }
+
+    }
+    switch(ghost3_dir)
+    {
+    case LEFT:
+        p.setX(ghost3_x-1);
+        p.setY(ghost3_y);
+        ghost3.setGhostDirection(ghost3_dir);
+
+        if(map.IsPointAvailable(p))
+        {
+            ghost3_x-=1;
+            ghostmoving3=true;
+
+        }
+        else
+        {
+            ghostmoving3=false;
+        }
+
+        break;
+
+    case RIGHT:
+        ghost3.setGhostDirection(ghost3_dir);
+        p.setX(ghost3_x+1);
+        p.setY(ghost3_y);
+        if(map.IsPointAvailable(p))
+        {
+            ghost3_x+=1;
+            ghostmoving3=true;
+        }
+        else
+        {
+            ghostmoving3=false;
+        }
+
+        break;
+    case DOWN:
+        ghost3.setGhostDirection(ghost3_dir);
+        p.setX(ghost3_x);
+        p.setY(ghost3_y+1);
+        if(map.IsPointAvailable(p))
+        {
+            ghost3_y+=1;
+            ghostmoving3=true;
+        }
+        else
+        {
+            ghostmoving3=false;
+        }
+
+        break;
+    case UP:
+        ghost3.setGhostDirection(ghost3_dir);
+        p.setX(ghost3_x);
+        p.setY(ghost3_y-1);
+        if(map.IsPointAvailable(p))
+        {
+            ghost3_y-=1;
+            ghostmoving3=true;
+        }
+        else
+        {
+            ghostmoving3=false;
+        }
+        break;
+    }
+
+
+    if(ghost3_x<=0)
+    {
+        ghost3_x=613;
+        ghost3_y=318;
+    }
+    else if(ghost3_x>=614)
+    {
+        ghost3_x=1;
+        ghost3_y=318;
+    }
+
+    ghost3.setGhost_X(ghost3_x);
+    ghost3.setGhost_Y(ghost3_y);
+    ghost3.setNextGhostDirection(nextghost3_dir);
+}
+void Game_window::GhostMove4()
+{
+    QPoint p;
+
+    int pac_x = pacman.getPac_X();
+    int pac_y = pacman.getPac_Y();
+    int ghost4_x = ghost4.getGhost_X();
+    int ghost4_y = ghost4.getGhost_Y();
+    int ghost4_dir = ghost4.getGhostDirection();
+    int nextghost4_dir = ghost4.getNextGhostDirection();
+
+    if(!ghostmoving4)
+    {
+        ghost4_dir=(qrand()%4)+1;
+    }
+    else
+    {
+
+        if(ghost4_x==pac_x && ghost4_y<pac_y)
+        {
+            nextghost4_dir = DOWN ;
+        }
+        else if (ghost4_x==pac_x && ghost4_y>pac_y)
+        {
+            nextghost4_dir = UP;
+        }
+        else if (ghost4_x<pac_x && ghost4_y==pac_y)
+        {
+            nextghost4_dir = RIGHT ;
+        }
+        else if(ghost4_x>pac_x && ghost4_y==pac_y)
+        {
+            nextghost4_dir = LEFT ;
+        }
+        else if(ghost4_x<pac_x && ghost4_y<pac_y)
+        {
+            nextghost4_dir = DOWN ;
+        }
+        else if (ghost4_x<pac_x && ghost4_y>pac_y)
+        {
+            nextghost4_dir = UP;
+        }
+        else if (ghost4_x>pac_x && ghost4_y<pac_x)
+        {
+            nextghost4_dir = DOWN ;
+        }
+        else if (ghost4_x>pac_x && ghost4_y>pac_y)
+        {
+            nextghost4_dir = UP ;
+        }
+
+        if((ghost4_dir==RIGHT && ghost4_y<pac_y) || (ghost4_dir==LEFT && ghost4_y>pac_y))
+        {
+            if(ghost4_dir==LEFT && ghost4_y>pac_y)
+            {
+                nextghost4_dir=UP;
+            }
+            else if(ghost4_dir==RIGHT &&ghost4_y<pac_y)
+            {
+                nextghost4_dir=DOWN;
+            }
+        }
+        else if((ghost4_dir==DOWN && ghost4_x<pac_x) || (ghost4_dir==UP && ghost4_x>pac_x))
+        {
+            if(ghost4_dir==UP && ghost4_x>pac_x)
+            {
+                nextghost4_dir=LEFT;
+            }
+            else if(ghost4_dir==DOWN && ghost4_x<pac_x)
+            {
+                nextghost4_dir=RIGHT;
+            }
+        }
+    }
+
+    if(nextghost4_dir!=ghost4_dir)
+    {
+        switch(nextghost4_dir)
+        {
+        case LEFT:
+            p.setX(ghost4_x-1);
+            p.setY(ghost4_y);
+
+            if(map.IsPointAvailable(p))
+            {
+                ghost4_dir=nextghost4_dir;
+                nextghost4_dir=0;
+            }
+
+            break;
+
+        case RIGHT:
+            p.setX(ghost4_x+1);
+            p.setY(ghost4_y);
+            if(map.IsPointAvailable(p))
+            {
+                ghost4_dir=nextghost4_dir;
+                nextghost4_dir=0;
+            }
+
+            break;
+        case DOWN:
+            p.setX(ghost4_x);
+            p.setY(ghost4_y+1);
+            if(map.IsPointAvailable(p))
+            {
+                ghost4_dir=nextghost4_dir;
+                nextghost4_dir=0;
+            }
+
+            break;
+        case UP:
+            p.setX(ghost4_x);
+            p.setY(ghost4_y-1);
+            if(map.IsPointAvailable(p))
+            {
+                ghost4_dir=nextghost4_dir;
+                nextghost4_dir=0;
+            }
+
+            break;
+        }
+
+    }
+    switch(ghost4_dir)
+    {
+    case LEFT:
+        p.setX(ghost4_x-1);
+        p.setY(ghost4_y);
+        ghost4.setGhostDirection(ghost4_dir);
+
+        if(map.IsPointAvailable(p))
+        {
+            ghost4_x-=1;
+            ghostmoving4=true;
+        }
+        else
+        {
+            ghostmoving4=false;
+        }
+
+        break;
+
+    case RIGHT:
+        ghost4.setGhostDirection(ghost4_dir);
+        p.setX(ghost4_x+1);
+        p.setY(ghost4_y);
+        if(map.IsPointAvailable(p))
+        {
+            ghost4_x+=1;
+            ghostmoving4=true;
+        }
+        else
+        {
+            ghostmoving4=false;
+        }
+
+        break;
+    case DOWN:
+        ghost4.setGhostDirection(ghost4_dir);
+        p.setX(ghost4_x);
+        p.setY(ghost4_y+1);
+        if(map.IsPointAvailable(p))
+        {
+            ghost4_y+=1;
+            ghostmoving4=true;
+        }
+        else
+        {
+            ghostmoving4=false;
+        }
+
+        break;
+    case UP:
+        ghost4.setGhostDirection(ghost4_dir);
+        p.setX(ghost4_x);
+        p.setY(ghost4_y-1);
+        if(map.IsPointAvailable(p))
+        {
+            ghost4_y-=1;
+            ghostmoving4=true;
+        }
+        else
+        {
+            ghostmoving4=false;
+        }
+        break;
+    }
+
+    if(ghost4_x<=0)
+    {
+        ghost4_x=613;
+        ghost4_y=318;
+    }
+    else if(ghost4_x>=614)
+    {
+        ghost4_x=1;
+        ghost4_y=318;
+    }
+    ghost4.setGhost_X(ghost4_x);
+    ghost4.setGhost_Y(ghost4_y);
+    ghost4.setNextGhostDirection(nextghost4_dir);
+}
+
+void Game_window::MoveGhostInStartingRect1()
+{
+    int ghost1_x = ghost1.getGhost_X();
+    int ghost1_y = ghost1.getGhost_Y();
+    int ghost1_dir = ghost1.getGhostDirection();
+
+    if(ghost1_x==307-50 || ghost1_x==307+50)
+    {
+        if(ghost1_dir==RIGHT)
+        {
+            ghost1_dir=LEFT;
+        }
+        else
+        {
+            ghost1_dir=RIGHT;
+        }
+    }
+
+    if(ghost1_dir==RIGHT)
+    {
+        ghost1_x+=1;
+    }
+    else
+    {
+        ghost1_x-=1;
+    }
+
+    ghost1.setGhost_X(ghost1_x);
+    ghost1.setGhost_Y(ghost1_y);
+    ghost1.setGhostDirection(ghost1_dir);
+}
+void Game_window::MoveGhostInStartingRect2()
+{
+    int ghost2_x = ghost2.getGhost_X();
+    int ghost2_y = ghost2.getGhost_Y();
+    int ghost2_dir = ghost2.getGhostDirection();
+
+    if(ghost2_x==307-50 || ghost2_x==307+50)
+    {
+        if(ghost2_dir==RIGHT)
+        {
+            ghost2_dir=LEFT;
+        }
+        else
+        {
+            ghost2_dir=RIGHT;
+        }
+    }
+    if(ghost2_dir==RIGHT)
+    {
+        ghost2_x+=LEFT;
+    }
+    else
+    {
+        ghost2_x-=1;
+    }
+
+    ghost2.setGhost_X(ghost2_x);
+    ghost2.setGhost_Y(ghost2_y);
+    ghost2.setGhostDirection(ghost2_dir);
+}
+void Game_window::MoveGhostInStartingRect3()
+{
+    int ghost3_x = ghost3.getGhost_X();
+    int ghost3_y = ghost3.getGhost_Y();
+    int ghost3_dir = ghost3.getGhostDirection();
+
+    if(ghost3_x==307-50 || ghost3_x==307+50)
+    {
+        if(ghost3_dir==RIGHT)
+        {
+            ghost3_dir=LEFT;
+        }
+        else
+        {
+            ghost3_dir=RIGHT;
+        }
+    }
+    if(ghost3_dir==RIGHT)
+    {
+        ghost3_x+=1;
+    }
+    else
+    {
+        ghost3_x-=1;
+    }
+
+    ghost3.setGhost_X(ghost3_x);
+    ghost3.setGhost_Y(ghost3_y);
+    ghost3.setGhostDirection(ghost3_dir);
+}
+void Game_window::MoveGhostInStartingRect4()
+{
+    int ghost4_x = ghost4.getGhost_X();
+    int ghost4_y = ghost4.getGhost_Y();
+    int ghost4_dir = ghost4.getGhostDirection();
+
+    if(ghost4_x==307-50 || ghost4_x==307+50)
+    {
+        if(ghost4_dir==RIGHT)
+        {
+            ghost4_dir=LEFT;
+        }
+        else
+        {
+            ghost4_dir=RIGHT;
+        }
+    }
+    if(ghost4_dir==RIGHT)
+    {
+        ghost4_x+=1;
+    }
+    else
+    {
+        ghost4_x-=1;
+    }
+
+    ghost4.setGhost_X(ghost4_x);
+    ghost4.setGhost_Y(ghost4_y);
+    ghost4.setGhostDirection(ghost4_dir);
+}
+
+void Game_window::keyPressEvent(QKeyEvent *event) //supports pacman movement using WSAD and directional keys
+{
+    int nextdirection = pacman.getNextDirection();
+
+    switch(event->key())
+    {
+    case Qt::Key_Left:
+        nextdirection=LEFT;
+        break;
+    case Qt::Key_A:
+        nextdirection=LEFT;
+        break;
+
+    case Qt::Key_Right:
+        nextdirection=RIGHT;
+        break;
+    case Qt::Key_D:
+        nextdirection=RIGHT;
+        break;
+
+    case Qt::Key_Down:
+        nextdirection=DOWN;
+        break;
+    case Qt::Key_S:
+        nextdirection=DOWN;
+        break;
+
+    case Qt::Key_Up:
+        nextdirection=UP;
+        break;
+    case Qt::Key_W:
+        nextdirection=UP;
+        break;
+
+    case Qt::Key_Z:
+        timer.start(5);
+        break;
+    case Qt::Key_X:
+        timer.start(10);
+        break;
+    case Qt::Key_C:
+        ghoststimer.start(5);
+        break;
+    case Qt::Key_V:
+        ghoststimer.start(10);
+        break;
+
+    case Qt::Key_Space:
+        if(!playing && ready_to_restart == false)
+        {
+            playing = true;
+            StartGame();
+        }
+        if(!playing && ready_to_restart == true)
+        {
+            ready_to_restart = false;
+            playing = true;
+            RestartGame();
+        }
+
+    //default:
+      //  break;
+    }
+    pacman.setNextDirection(nextdirection);
+}
+// let ghost back to StartRect and out
+void Game_window::CheckCollision()
+{
+    if(pacman.collidesWithItem(&ghost1) ||
+            pacman.collidesWithItem(&ghost2) ||
+            pacman.collidesWithItem(&ghost3) ||
+            pacman.collidesWithItem(&ghost4))
+    {
+        if(pacman.collidesWithItem(&ghost1) && ghost1.getIsScared())
+        {
+            sounds.eat_ghost_sound.play();
+            score +=200;
+            score_display->setPlainText("Score: " + QString::number(score));
+            ghost1.setGhost_X(307);
+            ghost1.setGhost_Y(252);
+            ghost1.setIsScared(false);
+        }
+        else if(pacman.collidesWithItem(&ghost2) && ghost2.getIsScared())
+        {
+            sounds.eat_ghost_sound.play();
+            score+=200;
+            score_display->setPlainText("Score: " + QString::number(score));
+            ghost2.setGhost_X(307);
+            ghost2.setGhost_Y(252);
+            ghost2.setIsScared(false);
+        }
+        else if(pacman.collidesWithItem(&ghost3) && ghost3.getIsScared())
+        {
+            sounds.eat_ghost_sound.play();
+            score+=200;
+            score_display->setPlainText("Score: " + QString::number(score));
+            ghost3.setGhost_X(307);
+            ghost3.setGhost_Y(252);
+            ghost3.setIsScared(false);
+        }
+        else if(pacman.collidesWithItem(&ghost4) && ghost4.getIsScared())
+        {
+            sounds.eat_ghost_sound.play();
+            score+=200;
+            score_display->setPlainText("Score: " + QString::number(score));
+            ghost4.setGhost_X(307);
+            ghost4.setGhost_Y(252);
+            ghost4.setIsScared(false);
+        }
+        else // touch the ghost which is normal
+        {
+            timer.stop();
+            ghoststimer.stop();
+            EndGame(0);
+        }
+    }
+}
+
+void Game_window::updater()
+{
+    int pac_x = pacman.getPac_X();
+    int pac_y = pacman.getPac_Y();
+
+    if(collision_detection_delay >= 500)
+        CheckCollision();
+    else
+        collision_detection_delay++;
+
+    PacmanMove();  //changes position of pacman
+
+    for(int i=0;i<dots_positions.size();i++)
+    {
+        if(pac_x==dots_positions.at(i).x() && pac_y==dots_positions.at(i).y())
+        {
+            dots_positions.remove(i);
+            dots_graphical_items_table.at(i)->hide();
+            dots_graphical_items_table.remove(i);
+
+            if(sounds.eat_sound1.state()==QMediaPlayer::StoppedState)
+            {
+                sounds.eat_sound1.play();
+            }
+
+            if(sounds.eat_sound1.state()==QMediaPlayer::PlayingState)
+            {
+                sounds.eat_sound1.play();
+            }
+
+            score = score + 10 ;
+            score_display->setPlainText("Score: " + QString::number(score));
+
+            dots_items_count--;
+        }
+    }
+
+    for(int i=0;i<energizer_positions.size();i++)
+    {
+        if(pac_x==energizer_positions.at(i).x() && pac_y==energizer_positions.at(i).y())
+        {
+            energizer_positions.remove(i);
+            energizer_graphical_items_table.at(i)->hide();
+            energizer_graphical_items_table.remove(i);
+
+            score += 200;
+            score_display->setPlainText("Score: " + QString::number(score));
+
+            scarestate = 0;
+
+            ghost1.setIsScared(true);
+            ghost2.setIsScared(true);
+            ghost3.setIsScared(true);
+            ghost4.setIsScared(true);
+
+            scared=true;
+
+            score_display->setPlainText("Score: " + QString::number(score));
+        }
+    }
+    // eat all balls
+    if(dots_items_count==0)
+    {
+        timer.stop();
+        ghoststimer.stop();
+        EndGame(1);
+    }
+
+    if(scared)
+    {
+        scarestate+=1;
+
+        if(scarestate==1)
+        {
+            ghoststimer.setInterval(20); // slow speed
+        }
+
+        if(scarestate==750)
+        {
+            ghost1.setScaredWhite(true);
+            ghost2.setScaredWhite(true);
+            ghost3.setScaredWhite(true);
+            ghost4.setScaredWhite(true);
+        }
+
+        if(scarestate==1000)
+        {
+            scared=false;
+            ghost1.setIsScared(false);
+            ghost2.setIsScared(false);
+            ghost3.setIsScared(false);
+            ghost4.setIsScared(false);
+
+            ghost1.setScaredWhite(false);
+            ghost2.setScaredWhite(false);
+            ghost3.setScaredWhite(false);
+            ghost4.setScaredWhite(false);
+
+            scarestate = 0;
+            ghoststimer.setInterval(10);
+        }
+    }
+
+    pacman.advance();
+    ghost1.advance();
+    ghost2.advance();
+    ghost3.advance();
+    ghost4.advance();
+
+    scene.update(scene.sceneRect());
+}
+
+void Game_window::ghostupdater()
+{
+    int ghost1_x = ghost1.getGhost_X();
+    int ghost1_y = ghost1.getGhost_Y();
+    int ghost2_x = ghost2.getGhost_X();
+    int ghost2_y = ghost2.getGhost_Y();
+    int ghost3_x = ghost3.getGhost_X();
+    int ghost3_y = ghost3.getGhost_Y();
+    int ghost4_x = ghost4.getGhost_X();
+    int ghost4_y = ghost4.getGhost_Y();
+
+    if(all_ghosts_started)
+    {
+        GhostMove1();
+        GhostMove2();
+        GhostMove3();
+        GhostMove4();
+    }
+    else
+    {
+        if(!ghoststart1)
+            MoveGhostInStartingRect1();
+        else
+            GhostMove1();
+
+        if(!ghoststart2)
+            MoveGhostInStartingRect2();
+        else
+            GhostMove2();
+
+        if(!ghoststart3)
+            MoveGhostInStartingRect3();
+        else
+            GhostMove3();
+
+        if(!ghoststart4)
+            MoveGhostInStartingRect4();
+        else
+            GhostMove4();
+
+        if(ghost1_x==300 || ghost2_x==300 || ghost3_x==300 || ghost4_x==300) //substitute of timer to be implemented for every ghost do differentiate start time
+        {
+            start_timer++;
+        }
+
+        if(start_timer>=0) // ghost 1 starts
+        {
+            QPoint p1;
+            if(ghost1_x>307)
+            {
+                ghost1_x-=1;
+            }
+            else if(ghost1_x<307)
+            {
+                ghost1_x+=1;
+            }
+
+            if(!ghoststart1)
+            {
+                ghost1_y-=1;
+                ghost1.setGhost_X(ghost1_x);
+                ghost1.setGhost_Y(ghost1_y);
+                p1.setX(ghost1_x);
+                p1.setY(ghost1_y);
+                if(map.getPaths().contains(p1))
+                {
+                    ghoststart1=true;
+                }
+            }
+        }
+
+        if(start_timer>=4) // ghost 2 starts
+        {
+            QPoint p2;
+            if(ghost2_x>307)
+            {
+                ghost2_x-=1;
+            }
+            else if(ghost2_x<307)
+            {
+                ghost2_x+=1;
+            }
+
+            if(!ghoststart2)
+            {
+                ghost2_y-=1;
+                ghost2.setGhost_X(ghost2_x);
+                ghost2.setGhost_Y(ghost2_y);
+                p2.setX(ghost2_x);
+                p2.setY(ghost2_y);
+                if(map.getPaths().contains(p2))
+                {
+                    ghoststart2=true;
+                }
+            }
+        }
+
+        if(start_timer>=8) // ghost 3 starts
+        {
+            QPoint p3;
+            if(ghost3_x>307)
+            {
+                ghost3_x-=1;
+            }
+            else if(ghost3_x<307)
+            {
+                ghost3_x+=1;
+            }
+
+            if(!ghoststart3)
+            {
+                ghost3_y-=1;
+                ghost3.setGhost_X(ghost3_x);
+                ghost3.setGhost_Y(ghost3_y);
+                p3.setX(ghost3_x);
+                p3.setY(ghost3_y);
+                if(map.getPaths().contains(p3))
+                {
+                    ghoststart3=true;
+                }
+            }
+        }
+
+        if(start_timer>=12) // ghost 4 starts
+        {
+            QPoint p4;
+            if(ghost4_x>307)
+            {
+                ghost4_x-=1;
+            }
+            else if(ghost4_x<307)
+            {
+                ghost4_x+=1;
+            }
+
+            if(!ghoststart4)
+            {
+                ghost4_y-=1;
+                ghost4.setGhost_X(ghost4_x);
+                ghost4.setGhost_Y(ghost4_y);
+                p4.setX(ghost4_x);
+                p4.setY(ghost4_y);
+                if(map.getPaths().contains(p4))
+                {
+                    ghoststart4=true;
+                }
+            }
+        }
+
+        if(ghoststart1 && ghoststart2 && ghoststart3 && ghoststart4)
+            all_ghosts_started=true;
+    }
+}
+
+Game_window::~Game_window()
+{
+    delete ui;
+}
